@@ -1,47 +1,78 @@
 // Require gcloud
-const { Storage } = require('@google-cloud/storage');
-const storage = new Storage({ projectId: 'data-model-ui', keyFilename: './service-account.json' });
-const stream = require('stream');
+const admin = require('firebase-admin');
+const path = require('path');
+const os = require('os');
+const fs = require('fs');
+const Busboy = require('busboy');
+const { firestore } = require('firebase-admin');
 
-exports.handler = async (req, response) => {
+exports.handler = async (req, res) => {
+    console.log('inside');
+    const bucket = admin.storage().bucket();
+    if (req.method !== 'POST') {
+        return res.status(405).end();
+    }
+    const busboy = new Busboy({headers: req.headers});
+    const tmpdir = os.tmpdir();
 
-    const bucket = await storage.bucket('gs://data-model-db.appspot.com');
+    const fields = {};
 
+    const uploads = {};
 
-    let pictureURL
-    const image = req.body.image
-    const mimeType = image.match(/data:([a-zA-Z0-9]+\/[a-zA-Z0-9-.+]+).*,.*/)[1]
-    const fileName = req.body.file
-//trim off the part of the payload that is not part of the base64 string
-    const base64EncodedImageString = image.replace(/^data:image\/\w+;base64,/, '')
-    const imageBuffer = Buffer.from(base64EncodedImageString, 'base64');
-    const bufferStream = new stream.PassThrough();
-    bufferStream.end(imageBuffer);
-// Define file and fileName
-    const file = bucket.file('images/' + fileName);
-    bufferStream.pipe(file.createWriteStream({
-        metadata: {
-            contentType: mimeType
-        },
-        public: true,
-        validation: "md5"
-    }))
-        .on('error', function (err) {
-            console.log('error from image upload', err);
-        })
-        .on('finish', function () {
-            // The file upload is complete.
-            file.getSignedUrl({
-                action: 'read',
-                expires: '03-09-2491'
-            }).then(signedUrls => {
-                // signedUrls[0] contains the file's public URL
-                pictureURL = signedUrls[0]
+    busboy.on('field', (fieldname, val) => {
+        console.log(`Processed field ${fieldname}: ${val}.`);
+        fields[fieldname] = val;
+    });
+
+    const fileWrites = [];
+    const fileNames = {};
+
+    busboy.on('file', (fieldname, file, filename) => {
+        console.log(`Processed file ${filename}`);
+        fileNames[fieldname] = filename;
+        const filepath = path.join(tmpdir, filename);
+        uploads[fieldname] = filepath;
+
+        const writeStream = fs.createWriteStream(filepath);
+        file.pipe(writeStream);
+        const promise = new Promise((resolve, reject) => {
+            file.on('end', () => {
+                writeStream.end();
             });
+            writeStream.on('finish', resolve);
+            writeStream.on('error', reject);
+        });
+        fileWrites.push(promise);
+    });
+    busboy.on('finish', async () => {
+        await Promise.all(fileWrites);
+        // upload file to firebase storage
+        await bucket.upload(uploads['file'], {
+            destination: fields['id']+ uploads['file'],
+            metadata: {
+                contentType: 'image',
+            },
+        });
+
+        // create url
+        const publicUrl = `https://firebasestorage.googleapis.com/v0/b/${
+            bucket.name
+        }/o/${fields['id']}%2Ftmp%2F${fileNames['file']}?alt=media`;
+
+        // create document in result collection of firestore
+        await admin.firestore().collection('results').doc(fields['id']).set({
+            'img': publicUrl
         });
 
 
-   ///////////////////////////////
-    console.log(request.body)
-    response.status(200).send(request.body)
+        for (const file in uploads) {
+            fs.unlinkSync(uploads[file]);
+        }
+
+        res.status(200).send({
+            'img': publicUrl
+        });
+    });
+
+    busboy.end(req.rawBody);
 }

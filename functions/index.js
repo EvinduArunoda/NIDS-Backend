@@ -1,6 +1,6 @@
 const functions = require("firebase-functions");
 const admin = require('firebase-admin');
-import AddDataFunction from './addDataHandler';
+const AddDataFunction = require('./addDataHandler');
 
 admin.initializeApp()
 
