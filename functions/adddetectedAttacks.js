@@ -4,7 +4,7 @@ const mailjet = require ('node-mailjet')
 
 exports.handler = async (req, res) => {
     const data = req.body;
-    let actionsToTake = data.actionsToTake || [];
+    let actionsToTake = data.actionsToTake || ['Action 1', 'Action 2'];
     if (data) {
         await admin.firestore().collection("Attacks").doc().set({
             actionsToTake : actionsToTake,
@@ -35,7 +35,6 @@ exports.handler = async (req, res) => {
                             ],
                             "Subject": "Attack Detected !",
                             "TextPart": "Attack Detected !",
-                            "HTMLPart": "<h3>Dear passenger 1, welcome to <a href='https://www.mailjet.com/'>Mailjet</a>!</h3><br />May the delivery force be with you!",
                             "HTMLPart": `<span>Attack Detected !<br/><br/> Attack Type: ${data.type || ''}<br/> Follow these actions to avoid these attacks,<br/>${actionsToTake.join(', ')}</span>`,
                             "CustomID": "AppGettingStartedTest"
                         }
